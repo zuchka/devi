@@ -8,6 +8,7 @@ export async function readState(stateDir, owner, repo) {
   try {
     const raw = await readFile(stateFile, 'utf8');
     const { lastDigestAt } = JSON.parse(raw);
+    if (!lastDigestAt) throw new Error('missing lastDigestAt');
     return lastDigestAt;
   } catch {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);

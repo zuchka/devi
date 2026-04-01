@@ -48,3 +48,13 @@ test('readState: returns 30-days-ago default when file is missing', async () => 
   assert.ok(resultMs <= after - thirtyDaysMs + 5000);
   await rm(dir, { recursive: true });
 });
+
+test('readState: returns 30-days-ago default when file has no lastDigestAt key', async () => {
+  const dir = join(tmpdir(), `digest-test-${Date.now()}`);
+  await mkdir(dir);
+  await writeFile(join(dir, 'myorg-myrepo.json'), JSON.stringify({}));
+  const result = await readState(dir, 'myorg', 'myrepo');
+  assert.ok(typeof result === 'string');
+  assert.ok(!isNaN(new Date(result).getTime())); // valid ISO date
+  await rm(dir, { recursive: true });
+});
