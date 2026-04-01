@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRepoUrl, readState } from './digest.js';
+import { parseRepoUrl, readState, shouldFilter } from './digest.js';
 
 test('parseRepoUrl: handles https URL', () => {
   const result = parseRepoUrl('https://github.com/anthropics/claude-code');
@@ -57,4 +57,62 @@ test('readState: returns 30-days-ago default when file has no lastDigestAt key',
   assert.ok(typeof result === 'string');
   assert.ok(!isNaN(new Date(result).getTime())); // valid ISO date
   await rm(dir, { recursive: true });
+});
+
+// shouldFilter tests
+
+const noiseTitle = (title) => ({ title, labels: [] });
+const noiseLabel = (label) => ({ title: 'Some feature', labels: [{ name: label }] });
+
+test('shouldFilter: filters dependabot PRs', () => {
+  assert.equal(shouldFilter({ title: 'Bump lodash from 4.17.20 to 4.17.21', labels: [] }), true);
+});
+
+test('shouldFilter: filters renovate PRs', () => {
+  assert.equal(shouldFilter(noiseTitle('renovate: update eslint')), true);
+});
+
+test('shouldFilter: filters chore: prefix', () => {
+  assert.equal(shouldFilter(noiseTitle('chore: update eslint')), true);
+});
+
+test('shouldFilter: filters chore( prefix', () => {
+  assert.equal(shouldFilter(noiseTitle('chore(deps): update eslint')), true);
+});
+
+test('shouldFilter: filters deps: prefix', () => {
+  assert.equal(shouldFilter(noiseTitle('deps: bump react')), true);
+});
+
+test('shouldFilter: filters ci: prefix', () => {
+  assert.equal(shouldFilter(noiseTitle('ci: fix lint step')), true);
+});
+
+test('shouldFilter: filters fix typo', () => {
+  assert.equal(shouldFilter(noiseTitle('fix typo in README')), true);
+});
+
+test('shouldFilter: filters by label: dependencies', () => {
+  assert.equal(shouldFilter(noiseLabel('dependencies')), true);
+});
+
+test('shouldFilter: filters by label: bot', () => {
+  assert.equal(shouldFilter(noiseLabel('bot')), true);
+});
+
+test('shouldFilter: filters by label: automated', () => {
+  assert.equal(shouldFilter(noiseLabel('automated')), true);
+});
+
+// PRs that should NOT be filtered
+test('shouldFilter: keeps feature PRs', () => {
+  assert.equal(shouldFilter({ title: 'Add dark mode support', labels: [] }), false);
+});
+
+test('shouldFilter: keeps bugfix PRs', () => {
+  assert.equal(shouldFilter({ title: 'Fix crash on login when session expires', labels: [] }), false);
+});
+
+test('shouldFilter: keeps PRs with feature label', () => {
+  assert.equal(shouldFilter({ title: 'New dashboard', labels: [{ name: 'feature' }] }), false);
 });

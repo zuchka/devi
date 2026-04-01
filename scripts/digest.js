@@ -32,3 +32,21 @@ export function parseRepoUrl(url) {
   }
   return { owner: parts[0], repo: parts[1] };
 }
+
+const NOISE_LABELS = new Set(['dependencies', 'chore', 'maintenance', 'automated', 'bot']);
+
+const NOISE_TITLE_PATTERNS = [
+  /bump\b/i,
+  /^chore[:(]/i,
+  /^deps[:(]/i,
+  /^fix typo/i,
+  /renovate/i,
+  /dependabot/i,
+  /^ci[:(]/i,
+];
+
+export function shouldFilter(pr) {
+  if (pr.labels.some((l) => NOISE_LABELS.has(l.name.toLowerCase()))) return true;
+  if (NOISE_TITLE_PATTERNS.some((re) => re.test(pr.title))) return true;
+  return false;
+}
