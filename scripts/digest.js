@@ -50,3 +50,38 @@ export function shouldFilter(pr) {
   if (NOISE_TITLE_PATTERNS.some((re) => re.test(pr.title))) return true;
   return false;
 }
+
+const GITHUB_HEADERS = {
+  Accept: 'application/vnd.github+json',
+  'X-GitHub-Api-Version': '2022-11-28',
+};
+
+export async function fetchMergedPRs(owner, repo, since, fetchFn = fetch) {
+  const token = process.env.GITHUB_TOKEN;
+  const headers = {
+    ...GITHUB_HEADERS,
+    Authorization: `Bearer ${token}`,
+  };
+
+  const allItems = [];
+  let url = `https://api.github.com/search/issues?q=is:pr+is:merged+repo:${owner}/${repo}+merged:>${since}&per_page=100`;
+
+  while (url) {
+    const res = await fetchFn(url, { headers });
+    const remaining = res.headers.get('X-RateLimit-Remaining');
+    if (remaining !== null && Number(remaining) === 0) {
+      throw new Error('GitHub rate limit exhausted mid-fetch. Re-run when limit resets.');
+    }
+    if (!res.ok) {
+      throw new Error(`GitHub API error ${res.status} fetching PRs`);
+    }
+    const data = await res.json();
+    allItems.push(...data.items);
+
+    const link = res.headers.get('Link') ?? '';
+    const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = nextMatch ? nextMatch[1] : null;
+  }
+
+  return allItems;
+}

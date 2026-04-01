@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRepoUrl, readState, shouldFilter } from './digest.js';
+import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs } from './digest.js';
 
 test('parseRepoUrl: handles https URL', () => {
   const result = parseRepoUrl('https://github.com/anthropics/claude-code');
@@ -115,4 +115,72 @@ test('shouldFilter: keeps bugfix PRs', () => {
 
 test('shouldFilter: keeps PRs with feature label', () => {
   assert.equal(shouldFilter({ title: 'New dashboard', labels: [{ name: 'feature' }] }), false);
+});
+
+// fetchMergedPRs tests
+
+function makeFakeFetch(pages) {
+  // pages: array of arrays of PR search items
+  let page = 0;
+  return async (url) => {
+    const items = pages[page] ?? [];
+    const isLastPage = page >= pages.length - 1;
+    page++;
+    return {
+      ok: true,
+      status: 200,
+      headers: {
+        get: (h) => {
+          if (h === 'X-RateLimit-Remaining') return '100';
+          if (h === 'Link') {
+            return isLastPage ? null : `<https://api.github.com/next>; rel="next"`;
+          }
+          return null;
+        },
+      },
+      json: async () => ({ items, total_count: items.length }),
+    };
+  };
+}
+
+test('fetchMergedPRs: returns items from single page', async () => {
+  const fakeFetch = makeFakeFetch([[{ number: 1 }, { number: 2 }]]);
+  const result = await fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].number, 1);
+});
+
+test('fetchMergedPRs: paginates across multiple pages', async () => {
+  const fakeFetch = makeFakeFetch([
+    [{ number: 1 }, { number: 2 }],
+    [{ number: 3 }],
+  ]);
+  const result = await fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
+  assert.equal(result.length, 3);
+});
+
+test('fetchMergedPRs: throws on rate limit (0 remaining)', async () => {
+  const fakeFetch = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: (h) => (h === 'X-RateLimit-Remaining' ? '0' : null) },
+    json: async () => ({ items: [{ number: 1 }], total_count: 1 }),
+  });
+  await assert.rejects(
+    () => fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
+    /rate limit/i
+  );
+});
+
+test('fetchMergedPRs: throws on 401', async () => {
+  const fakeFetch = async () => ({
+    ok: false,
+    status: 401,
+    headers: { get: () => null },
+    json: async () => ({ message: 'Bad credentials' }),
+  });
+  await assert.rejects(
+    () => fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
+    /401/
+  );
 });
