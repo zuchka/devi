@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs, fetchPRDetail } from './digest.js';
+import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs, fetchPRDetail, runDigest } from './digest.js';
 
 test('parseRepoUrl: handles https URL', () => {
   const result = parseRepoUrl('https://github.com/anthropics/claude-code');
@@ -257,4 +257,95 @@ test('fetchPRDetail: handles null body', async () => {
   };
   const result = await fetchPRDetail('owner', 'repo', 1, makePRDetailFetch(raw));
   assert.equal(result.body, '');
+});
+
+function makeOrchestrationFetch(searchItems, prDetails) {
+  return async (url) => {
+    if (url.includes('/search/issues')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === 'X-RateLimit-Remaining' ? '100' : null) },
+        json: async () => ({ items: searchItems, total_count: searchItems.length }),
+      };
+    }
+    const match = url.match(/\/pulls\/(\d+)$/);
+    const num = match ? Number(match[1]) : null;
+    const pr = prDetails.find((p) => p.number === num);
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => pr,
+    };
+  };
+}
+
+test('runDigest: returns candidate PRs after heuristic filter', async () => {
+  const stateDir = join(tmpdir(), `digest-orch-${Date.now()}`);
+  await mkdir(stateDir);
+
+  const searchItems = [
+    { number: 1 },
+    { number: 2 }, // will be filtered
+  ];
+  const prDetails = [
+    {
+      number: 1,
+      title: 'Add search feature',
+      body: 'Users can now search',
+      html_url: 'https://github.com/o/r/pull/1',
+      merged_at: '2026-03-28T00:00:00Z',
+      user: { login: 'alice' },
+      labels: [],
+      additions: 50,
+      deletions: 5,
+      changed_files: 3,
+    },
+    {
+      number: 2,
+      title: 'chore: bump eslint',
+      body: '',
+      html_url: 'https://github.com/o/r/pull/2',
+      merged_at: '2026-03-29T00:00:00Z',
+      user: { login: 'bot' },
+      labels: [],
+      additions: 2,
+      deletions: 2,
+      changed_files: 1,
+    },
+  ];
+
+  const fakeFetch = makeOrchestrationFetch(searchItems, prDetails);
+  const result = await runDigest('o', 'r', stateDir, fakeFetch);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].number, 1);
+  assert.equal(result[0].title, 'Add search feature');
+
+  await rm(stateDir, { recursive: true });
+});
+
+test('runDigest: returns empty array when all PRs are filtered', async () => {
+  const stateDir = join(tmpdir(), `digest-orch-${Date.now()}`);
+  await mkdir(stateDir);
+
+  const searchItems = [{ number: 1 }];
+  const prDetails = [{
+    number: 1,
+    title: 'chore: bump eslint',
+    body: '',
+    html_url: 'https://github.com/o/r/pull/1',
+    merged_at: '2026-03-29T00:00:00Z',
+    user: { login: 'bot' },
+    labels: [],
+    additions: 1,
+    deletions: 1,
+    changed_files: 1,
+  }];
+
+  const fakeFetch = makeOrchestrationFetch(searchItems, prDetails);
+  const result = await runDigest('o', 'r', stateDir, fakeFetch);
+  assert.equal(result.length, 0);
+
+  await rm(stateDir, { recursive: true });
 });

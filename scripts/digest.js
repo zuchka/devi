@@ -1,7 +1,8 @@
 // scripts/digest.js
 
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export async function readState(stateDir, owner, repo) {
   const stateFile = join(stateDir, `${owner}-${repo}.json`);
@@ -112,4 +113,39 @@ export async function fetchPRDetail(owner, repo, number, fetchFn = fetch) {
     deletions: pr.deletions,
     changedFiles: pr.changed_files,
   };
+}
+
+export async function runDigest(owner, repo, stateDir, fetchFn = fetch) {
+  const since = await readState(stateDir, owner, repo);
+  const searchItems = await fetchMergedPRs(owner, repo, since, fetchFn);
+  const details = await Promise.all(
+    searchItems.map((item) => fetchPRDetail(owner, repo, item.number, fetchFn))
+  );
+  return details.filter((pr) => !shouldFilter(pr));
+}
+
+// Only runs when invoked directly (not when imported by tests)
+const isMain = process.argv[1] === fileURLToPath(import.meta.url);
+if (isMain) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.error('Error: GITHUB_TOKEN environment variable is required');
+    process.exit(1);
+  }
+
+  const repoArg = process.argv[2] ?? process.env.DIGEST_REPO;
+  if (!repoArg) {
+    console.error('Error: provide a GitHub repo URL as argument or set DIGEST_REPO');
+    process.exit(1);
+  }
+
+  try {
+    const { owner, repo } = parseRepoUrl(repoArg);
+    const stateDir = resolve(dirname(fileURLToPath(import.meta.url)), '../state');
+    const candidates = await runDigest(owner, repo, stateDir);
+    process.stdout.write(JSON.stringify(candidates, null, 2));
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
 }
