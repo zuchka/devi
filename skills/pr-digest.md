@@ -20,7 +20,7 @@ Use `DIGEST_REPO` env var as fallback if no URL argument is provided. If neither
    ```json
    { "lastDigestAt": "<ISO timestamp 30 days ago>" }
    ```
-   This must happen before Step 1 — `digest.js` reads this file but never creates it.
+   This ensures a clean starting state — `digest.js` can handle a missing file (it defaults to 30 days ago), but pre-creating it avoids ambiguity.
 
 ## Step 1: Fetch Candidates
 
