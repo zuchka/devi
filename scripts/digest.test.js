@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs } from './digest.js';
+import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs, fetchPRDetail } from './digest.js';
 
 test('parseRepoUrl: handles https URL', () => {
   const result = parseRepoUrl('https://github.com/anthropics/claude-code');
@@ -183,4 +183,78 @@ test('fetchMergedPRs: throws on 401', async () => {
     () => fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
     /401/
   );
+});
+
+// fetchPRDetail tests
+
+function makePRDetailFetch(prData) {
+  return async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: async () => prData,
+  });
+}
+
+test('fetchPRDetail: returns shaped PR object', async () => {
+  const raw = {
+    number: 42,
+    title: 'Add dark mode',
+    body: 'Implements dark mode toggle',
+    html_url: 'https://github.com/owner/repo/pull/42',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'alice' },
+    labels: [{ name: 'feature' }],
+    additions: 100,
+    deletions: 20,
+    changed_files: 5,
+  };
+  const fakeFetch = makePRDetailFetch(raw);
+  const result = await fetchPRDetail('owner', 'repo', 42, fakeFetch);
+  assert.deepEqual(result, {
+    number: 42,
+    title: 'Add dark mode',
+    body: 'Implements dark mode toggle',
+    url: 'https://github.com/owner/repo/pull/42',
+    mergedAt: '2026-03-28T14:00:00Z',
+    author: 'alice',
+    labels: [{ name: 'feature' }],
+    additions: 100,
+    deletions: 20,
+    changedFiles: 5,
+  });
+});
+
+test('fetchPRDetail: truncates body at 4000 chars', async () => {
+  const raw = {
+    number: 1,
+    title: 'Big PR',
+    body: 'x'.repeat(5000),
+    html_url: 'https://github.com/owner/repo/pull/1',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'bob' },
+    labels: [],
+    additions: 1,
+    deletions: 0,
+    changed_files: 1,
+  };
+  const result = await fetchPRDetail('owner', 'repo', 1, makePRDetailFetch(raw));
+  assert.equal(result.body.length, 4000);
+});
+
+test('fetchPRDetail: handles null body', async () => {
+  const raw = {
+    number: 1,
+    title: 'No description',
+    body: null,
+    html_url: 'https://github.com/owner/repo/pull/1',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'bob' },
+    labels: [],
+    additions: 1,
+    deletions: 0,
+    changed_files: 1,
+  };
+  const result = await fetchPRDetail('owner', 'repo', 1, makePRDetailFetch(raw));
+  assert.equal(result.body, '');
 });

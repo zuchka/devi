@@ -85,3 +85,31 @@ export async function fetchMergedPRs(owner, repo, since, fetchFn = fetch) {
 
   return allItems;
 }
+
+export async function fetchPRDetail(owner, repo, number, fetchFn = fetch) {
+  const token = process.env.GITHUB_TOKEN;
+  const headers = {
+    ...GITHUB_HEADERS,
+    Authorization: `Bearer ${token}`,
+  };
+  const res = await fetchFn(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
+    { headers }
+  );
+  if (!res.ok) {
+    throw new Error(`GitHub API error ${res.status} fetching PR #${number}`);
+  }
+  const pr = await res.json();
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: (pr.body ?? '').slice(0, 4000),
+    url: pr.html_url,
+    mergedAt: pr.merged_at,
+    author: pr.user.login,
+    labels: pr.labels,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changedFiles: pr.changed_files,
+  };
+}
