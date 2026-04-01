@@ -1,5 +1,20 @@
 // scripts/digest.js
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+export async function readState(stateDir, owner, repo) {
+  const stateFile = join(stateDir, `${owner}-${repo}.json`);
+  try {
+    const raw = await readFile(stateFile, 'utf8');
+    const { lastDigestAt } = JSON.parse(raw);
+    return lastDigestAt;
+  } catch {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    return thirtyDaysAgo.toISOString();
+  }
+}
+
 export function parseRepoUrl(url) {
   let parsed;
   try {
