@@ -59,7 +59,6 @@ const GITHUB_HEADERS = {
 
 export async function fetchMergedPRs(owner, repo, since, fetchFn = fetch) {
   const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error('GITHUB_TOKEN environment variable is required');
   const headers = {
     ...GITHUB_HEADERS,
     Authorization: `Bearer ${token}`,
@@ -90,7 +89,6 @@ export async function fetchMergedPRs(owner, repo, since, fetchFn = fetch) {
 
 export async function fetchPRDetail(owner, repo, number, fetchFn = fetch) {
   const token = process.env.GITHUB_TOKEN;
-  if (!token) throw new Error('GITHUB_TOKEN environment variable is required');
   const headers = {
     ...GITHUB_HEADERS,
     Authorization: `Bearer ${token}`,
