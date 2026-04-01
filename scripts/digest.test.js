@@ -104,6 +104,14 @@ test('shouldFilter: filters by label: automated', () => {
   assert.equal(shouldFilter(noiseLabel('automated')), true);
 });
 
+test('shouldFilter: filters by label: chore', () => {
+  assert.equal(shouldFilter(noiseLabel('chore')), true);
+});
+
+test('shouldFilter: filters by label: maintenance', () => {
+  assert.equal(shouldFilter(noiseLabel('maintenance')), true);
+});
+
 // PRs that should NOT be filtered
 test('shouldFilter: keeps feature PRs', () => {
   assert.equal(shouldFilter({ title: 'Add dark mode support', labels: [] }), false);

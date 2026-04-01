@@ -143,7 +143,7 @@ if (isMain) {
     const { owner, repo } = parseRepoUrl(repoArg);
     const stateDir = resolve(dirname(fileURLToPath(import.meta.url)), '../state');
     const candidates = await runDigest(owner, repo, stateDir);
-    process.stdout.write(JSON.stringify(candidates, null, 2));
+    process.stdout.write(JSON.stringify(candidates, null, 2) + '\n');
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);

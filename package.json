@@ -5,5 +5,8 @@
   "scripts": {
     "test": "node --test scripts/digest.test.js",
     "digest": "node scripts/digest.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
