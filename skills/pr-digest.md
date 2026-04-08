@@ -65,7 +65,7 @@ If zero commits are notable:
 
 ## Step 4: Write Social Copy
 
-For each notable commit, write:
+Assign each notable commit a sequential number starting at 1. For each, write:
 
 **X copy** (≤280 chars):
 - Lead with the user value or impact — not the commit SHA
@@ -83,7 +83,7 @@ For each notable commit, write:
 
 Determine filename: start with `digests/YYYY-MM-DD.md` (today's date). If that file already exists, use `digests/YYYY-MM-DD-2.md`, then `-3`, etc.
 
-Write the file with this structure:
+Write the file with this structure (note the `N.` number prefix on each heading):
 
 ```
 # Commit Digest — <owner>/<repo> — <YYYY-MM-DD>
@@ -92,7 +92,17 @@ _<N> notable commits since <lastDigestAt date>_
 
 ---
 
-## [Commit Title](commit-url)
+## 1. [Commit Title](commit-url)
+
+**X copy**
+<copy here>
+
+**LinkedIn copy**
+<copy here>
+
+---
+
+## 2. [Commit Title](commit-url)
 
 **X copy**
 <copy here>
@@ -105,7 +115,12 @@ _<N> notable commits since <lastDigestAt date>_
 
 ## Step 6: Print to Terminal
 
-Print the full digest content to the terminal.
+Print the full digest content to the terminal. After the digest, print this footer:
+
+```
+---
+To schedule an item: "schedule number <N> to linkedin", "schedule number <N> to x", or "schedule number <N> to both"
+```
 
 ## Step 7: Post to Slack
 
