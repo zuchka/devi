@@ -45,11 +45,10 @@ async function channels() {
   if (!orgId) throw new Error('No organization found on this account');
 
   const data = await gql(
-    `query Channels($id: String!) {
+    `query Channels($id: OrganizationId!) {
       channels(input: { organizationId: $id }) {
         id
         service
-        serviceUsername
       }
     }`,
     { id: orgId }
@@ -65,7 +64,7 @@ async function post(channelId) {
   if (!text) throw new Error('No text provided on stdin');
 
   const data = await gql(
-    `mutation Post($channelId: String!, $text: String!) {
+    `mutation Post($channelId: ChannelId!, $text: String!) {
       createPost(input: {
         channelId: $channelId
         text: $text
@@ -76,7 +75,7 @@ async function post(channelId) {
           post { id status dueAt }
         }
         ... on MutationError {
-          error { message }
+          message
         }
       }
     }`,
@@ -84,7 +83,7 @@ async function post(channelId) {
   );
 
   const result = data.createPost;
-  if (result.error) throw new Error(result.error.message);
+  if (result.message) throw new Error(result.message);
   console.log(JSON.stringify(result.post));
 }
 
