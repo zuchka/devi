@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`content-flywheel` is a commit digest generation system. It fetches merged commits from a GitHub repo since the last run, filters noise, evaluates commits for user significance, generates social copy (X + LinkedIn), writes dated markdown digests, and posts to Slack.
+`content-flywheel` is a PR digest generation system. It fetches merged PRs from a GitHub repo since the last run, filters noise, evaluates PRs for user significance, generates social copy (X + LinkedIn), writes dated markdown digests, and posts to Slack.
 
 ## Commands
 
@@ -39,8 +39,8 @@ echo "post text" | node scripts/buffer-post.js post <channelId>
 The system has three layers:
 
 **Layer 1 — `scripts/digest.js`** (data fetching, side-effect-free)
-- Parses GitHub repo URLs, reads state from `state/<owner>-<repo>.json`, fetches paginated commits via GitHub API, applies heuristic pre-filter, and outputs JSON to stdout.
-- Key exports: `parseRepoUrl`, `readState`, `shouldFilter`, `fetchCommits`, `runDigest`
+- Parses GitHub repo URLs, reads state from `state/<owner>-<repo>.json`, fetches merged PRs via GitHub Search API + PR detail API, applies heuristic pre-filter, and outputs JSON to stdout.
+- Key exports: `parseRepoUrl`, `readState`, `shouldFilter`, `fetchMergedPRs`, `fetchPRDetail`, `runDigest`
 
 **Layer 2 — `skills/pr-digest.md`** (Claude skill prompt, AI judgment)
 - Invoked as `/pr-digest https://github.com/owner/repo`
@@ -61,7 +61,7 @@ The system has three layers:
 **Data flow:**
 ```
 /pr-digest <repo-url>
-  → digest.js: parse → read state → fetch commits (paginated) → heuristic filter → JSON stdout
+  → digest.js: parse → read state → fetch merged PRs (Search API) → fetch PR details → heuristic filter → JSON stdout
   → Claude (pr-digest.md): judge notability → generate numbered copy → write digest → post Slack → update state
 
 User: "schedule number 3 to linkedin and x"
@@ -73,12 +73,12 @@ User: "schedule number 3 to linkedin and x"
 
 ## Heuristic Pre-Filter (`shouldFilter`)
 
-`digest.js` drops commits matching these **title patterns** (case-insensitive):
+`digest.js` drops PRs matching these **title patterns** (case-insensitive):
 - `bump\b`, `^chore[:(]`, `^deps[:(]`, `^fix typo`, `renovate`, `dependabot`, `^ci[:(]`, `^test[:(]`, `^docs[:(]`, `^refactor[:(]`
 
 Or having any of these **labels**: `dependencies`, `chore`, `maintenance`, `automated`, `bot`
 
-After heuristic filtering, the Claude skill applies judgment: a commit is notable if it introduces user-facing functionality, new APIs/CLI commands, performance improvements, production bug fixes, or meaningful architectural changes.
+After heuristic filtering, the Claude skill applies judgment: a PR is notable if it introduces user-facing functionality, new APIs/CLI commands, performance improvements, production bug fixes, or meaningful architectural changes.
 
 ## Runtime Requirements
 
