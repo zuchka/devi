@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseRepoUrl, readState, shouldFilter, fetchCommits, runDigest } from './digest.js';
+import { parseRepoUrl, readState, shouldFilter, fetchMergedPRs, fetchPRDetail, runDigest } from './digest.js';
 
 test('parseRepoUrl: handles https URL', () => {
   const result = parseRepoUrl('https://github.com/anthropics/claude-code');
@@ -68,7 +68,7 @@ test('shouldFilter: filters dependabot PRs', () => {
   assert.equal(shouldFilter({ title: 'Bump lodash from 4.17.20 to 4.17.21', labels: [] }), true);
 });
 
-test('shouldFilter: filters renovate commits', () => {
+test('shouldFilter: filters renovate PRs', () => {
   assert.equal(shouldFilter(noiseTitle('renovate: update eslint')), true);
 });
 
@@ -128,16 +128,16 @@ test('shouldFilter: works without labels field', () => {
   assert.equal(shouldFilter({ title: 'chore: bump deps' }), true);
 });
 
-// Commits that should NOT be filtered
-test('shouldFilter: keeps feature commits', () => {
+// PRs that should NOT be filtered
+test('shouldFilter: keeps feature PRs', () => {
   assert.equal(shouldFilter({ title: 'Add dark mode support', labels: [] }), false);
 });
 
-test('shouldFilter: keeps feat: prefix commits', () => {
+test('shouldFilter: keeps feat: prefix PRs', () => {
   assert.equal(shouldFilter({ title: 'feat: add search functionality', labels: [] }), false);
 });
 
-test('shouldFilter: keeps bugfix commits', () => {
+test('shouldFilter: keeps bugfix PRs', () => {
   assert.equal(shouldFilter({ title: 'Fix crash on login when session expires', labels: [] }), false);
 });
 
@@ -145,13 +145,17 @@ test('shouldFilter: keeps fix: prefix when not fix typo', () => {
   assert.equal(shouldFilter({ title: 'fix: handle null pointer in auth flow', labels: [] }), false);
 });
 
-// fetchCommits tests
+test('shouldFilter: keeps PRs with feature label', () => {
+  assert.equal(shouldFilter({ title: 'New dashboard', labels: [{ name: 'feature' }] }), false);
+});
 
-function makeCommitsFetch(pages) {
-  // pages: array of arrays of raw GitHub commit objects
+// fetchMergedPRs tests
+
+function makeFakeFetch(pages) {
+  // pages: array of arrays of PR search items
   let page = 0;
   return async (url) => {
-    const commits = pages[page] ?? [];
+    const items = pages[page] ?? [];
     const isLastPage = page >= pages.length - 1;
     page++;
     return {
@@ -166,92 +170,41 @@ function makeCommitsFetch(pages) {
           return null;
         },
       },
-      json: async () => commits,
+      json: async () => ({ items, total_count: items.length }),
     };
   };
 }
 
-function makeRawCommit(overrides = {}) {
-  return {
-    sha: 'abc1234567890',
-    commit: {
-      message: overrides.message ?? 'feat: add something',
-      author: { date: '2026-03-28T12:00:00Z', name: 'Alice' },
-    },
-    html_url: 'https://github.com/owner/repo/commit/abc1234',
-    author: { login: overrides.login ?? 'alice' },
-    ...overrides,
-  };
-}
-
-test('fetchCommits: returns shaped commits from single page', async () => {
-  const raw = [makeRawCommit({ sha: 'aaabbbccc111', message: 'feat: add search' })];
-  const fakeFetch = makeCommitsFetch([raw]);
-  const result = await fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].sha, 'aaabbbc');
-  assert.equal(result[0].title, 'feat: add search');
-  assert.equal(result[0].author, 'alice');
+test('fetchMergedPRs: returns items from single page', async () => {
+  const fakeFetch = makeFakeFetch([[{ number: 1 }, { number: 2 }]]);
+  const result = await fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].number, 1);
 });
 
-test('fetchCommits: paginates across multiple pages', async () => {
-  const page1 = [makeRawCommit({ sha: 'aaa0000000000' }), makeRawCommit({ sha: 'bbb0000000000' })];
-  const page2 = [makeRawCommit({ sha: 'ccc0000000000' })];
-  const fakeFetch = makeCommitsFetch([page1, page2]);
-  const result = await fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
+test('fetchMergedPRs: paginates across multiple pages', async () => {
+  const fakeFetch = makeFakeFetch([
+    [{ number: 1 }, { number: 2 }],
+    [{ number: 3 }],
+  ]);
+  const result = await fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
   assert.equal(result.length, 3);
 });
 
-test('fetchCommits: splits commit message into title and body', async () => {
-  const raw = [makeRawCommit({
-    sha: 'abc0000000000',
-    message: 'feat: add search\n\nThis PR adds full-text search support.\nIt uses elasticsearch.',
-  })];
-  const fakeFetch = makeCommitsFetch([raw]);
-  const result = await fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
-  assert.equal(result[0].title, 'feat: add search');
-  assert.equal(result[0].body, 'This PR adds full-text search support.\nIt uses elasticsearch.');
-});
-
-test('fetchCommits: truncates body at 4000 chars', async () => {
-  const raw = [makeRawCommit({
-    sha: 'abc0000000000',
-    message: 'feat: something\n\n' + 'x'.repeat(5000),
-  })];
-  const fakeFetch = makeCommitsFetch([raw]);
-  const result = await fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
-  assert.equal(result[0].body.length, 4000);
-});
-
-test('fetchCommits: falls back to commit author name when no login', async () => {
-  const raw = [{
-    sha: 'abc0000000000',
-    commit: {
-      message: 'feat: add something',
-      author: { date: '2026-03-28T12:00:00Z', name: 'Jane Doe' },
-    },
-    html_url: 'https://github.com/owner/repo/commit/abc0000',
-    author: null, // no GitHub user association
-  }];
-  const fakeFetch = makeCommitsFetch([raw]);
-  const result = await fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch);
-  assert.equal(result[0].author, 'Jane Doe');
-});
-
-test('fetchCommits: throws on rate limit (0 remaining)', async () => {
+test('fetchMergedPRs: throws on rate limit (0 remaining)', async () => {
   const fakeFetch = async () => ({
     ok: true,
     status: 200,
     headers: { get: (h) => (h === 'X-RateLimit-Remaining' ? '0' : null) },
-    json: async () => [makeRawCommit()],
+    json: async () => ({ items: [{ number: 1 }], total_count: 1 }),
   });
   await assert.rejects(
-    () => fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
+    () => fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
     /rate limit/i
   );
 });
 
-test('fetchCommits: throws on 401', async () => {
+test('fetchMergedPRs: throws on 401', async () => {
   const fakeFetch = async () => ({
     ok: false,
     status: 401,
@@ -259,49 +212,170 @@ test('fetchCommits: throws on 401', async () => {
     json: async () => ({ message: 'Bad credentials' }),
   });
   await assert.rejects(
-    () => fetchCommits('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
+    () => fetchMergedPRs('owner', 'repo', '2026-01-01T00:00:00Z', fakeFetch),
     /401/
   );
 });
 
-// runDigest tests
+// fetchPRDetail tests
 
-function makeDigestFetch(commits) {
+function makePRDetailFetch(prData) {
   return async () => ({
     ok: true,
     status: 200,
-    headers: { get: (h) => (h === 'X-RateLimit-Remaining' ? '100' : null) },
-    json: async () => commits,
+    headers: { get: () => null },
+    json: async () => prData,
   });
 }
 
-test('runDigest: returns notable commits after heuristic filter', async () => {
+test('fetchPRDetail: returns shaped PR object', async () => {
+  const raw = {
+    number: 42,
+    title: 'Add dark mode',
+    body: 'Implements dark mode toggle',
+    html_url: 'https://github.com/owner/repo/pull/42',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'alice' },
+    labels: [{ name: 'feature' }],
+    additions: 100,
+    deletions: 20,
+    changed_files: 5,
+  };
+  const fakeFetch = makePRDetailFetch(raw);
+  const result = await fetchPRDetail('owner', 'repo', 42, fakeFetch);
+  assert.deepEqual(result, {
+    number: 42,
+    title: 'Add dark mode',
+    body: 'Implements dark mode toggle',
+    url: 'https://github.com/owner/repo/pull/42',
+    mergedAt: '2026-03-28T14:00:00Z',
+    author: 'alice',
+    labels: [{ name: 'feature' }],
+    additions: 100,
+    deletions: 20,
+    changedFiles: 5,
+  });
+});
+
+test('fetchPRDetail: truncates body at 4000 chars', async () => {
+  const raw = {
+    number: 1,
+    title: 'Big PR',
+    body: 'x'.repeat(5000),
+    html_url: 'https://github.com/owner/repo/pull/1',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'bob' },
+    labels: [],
+    additions: 1,
+    deletions: 0,
+    changed_files: 1,
+  };
+  const result = await fetchPRDetail('owner', 'repo', 1, makePRDetailFetch(raw));
+  assert.equal(result.body.length, 4000);
+});
+
+test('fetchPRDetail: handles null body', async () => {
+  const raw = {
+    number: 1,
+    title: 'No description',
+    body: null,
+    html_url: 'https://github.com/owner/repo/pull/1',
+    merged_at: '2026-03-28T14:00:00Z',
+    user: { login: 'bob' },
+    labels: [],
+    additions: 1,
+    deletions: 0,
+    changed_files: 1,
+  };
+  const result = await fetchPRDetail('owner', 'repo', 1, makePRDetailFetch(raw));
+  assert.equal(result.body, '');
+});
+
+function makeOrchestrationFetch(searchItems, prDetails) {
+  return async (url) => {
+    if (url.includes('/search/issues')) {
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (h) => (h === 'X-RateLimit-Remaining' ? '100' : null) },
+        json: async () => ({ items: searchItems, total_count: searchItems.length }),
+      };
+    }
+    const match = url.match(/\/pulls\/(\d+)$/);
+    const num = match ? Number(match[1]) : null;
+    const pr = prDetails.find((p) => p.number === num);
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      json: async () => pr,
+    };
+  };
+}
+
+test('runDigest: returns candidate PRs after heuristic filter', async () => {
   const stateDir = join(tmpdir(), `digest-orch-${Date.now()}`);
   await mkdir(stateDir);
 
-  const rawCommits = [
-    makeRawCommit({ sha: 'aaa0000000000', message: 'feat: add jq support', login: 'alice' }),
-    makeRawCommit({ sha: 'bbb0000000000', message: 'chore: bump eslint', login: 'bot' }),
+  const searchItems = [
+    { number: 1 },
+    { number: 2 }, // will be filtered
+  ];
+  const prDetails = [
+    {
+      number: 1,
+      title: 'Add search feature',
+      body: 'Users can now search',
+      html_url: 'https://github.com/o/r/pull/1',
+      merged_at: '2026-03-28T00:00:00Z',
+      user: { login: 'alice' },
+      labels: [],
+      additions: 50,
+      deletions: 5,
+      changed_files: 3,
+    },
+    {
+      number: 2,
+      title: 'chore: bump eslint',
+      body: '',
+      html_url: 'https://github.com/o/r/pull/2',
+      merged_at: '2026-03-29T00:00:00Z',
+      user: { login: 'bot' },
+      labels: [],
+      additions: 2,
+      deletions: 2,
+      changed_files: 1,
+    },
   ];
 
-  const fakeFetch = makeDigestFetch(rawCommits);
+  const fakeFetch = makeOrchestrationFetch(searchItems, prDetails);
   const result = await runDigest('o', 'r', stateDir, fakeFetch);
   assert.equal(result.length, 1);
-  assert.equal(result[0].title, 'feat: add jq support');
+  assert.equal(result[0].number, 1);
+  assert.equal(result[0].title, 'Add search feature');
 
   await rm(stateDir, { recursive: true });
 });
 
-test('runDigest: returns empty array when all commits are filtered', async () => {
+test('runDigest: returns empty array when all PRs are filtered', async () => {
   const stateDir = join(tmpdir(), `digest-orch-${Date.now()}`);
   await mkdir(stateDir);
 
-  const rawCommits = [
-    makeRawCommit({ sha: 'aaa0000000000', message: 'chore: bump eslint' }),
-    makeRawCommit({ sha: 'bbb0000000000', message: 'docs: update README' }),
-  ];
+  const searchItems = [{ number: 1 }];
+  const prDetails = [{
+    number: 1,
+    title: 'chore: bump eslint',
+    body: '',
+    html_url: 'https://github.com/o/r/pull/1',
+    merged_at: '2026-03-29T00:00:00Z',
+    user: { login: 'bot' },
+    labels: [],
+    additions: 1,
+    deletions: 1,
+    changed_files: 1,
+  }];
 
-  const fakeFetch = makeDigestFetch(rawCommits);
+  const fakeFetch = makeOrchestrationFetch(searchItems, prDetails);
   const result = await runDigest('o', 'r', stateDir, fakeFetch);
   assert.equal(result.length, 0);
 

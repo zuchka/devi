@@ -87,6 +87,36 @@ async function post(channelId) {
   console.log(JSON.stringify(result.post));
 }
 
+async function postnow(channelId) {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const text = Buffer.concat(chunks).toString('utf8').trim();
+  if (!text) throw new Error('No text provided on stdin');
+
+  const data = await gql(
+    `mutation Post($channelId: ChannelId!, $text: String!) {
+      createPost(input: {
+        channelId: $channelId
+        text: $text
+        schedulingType: automatic
+        mode: shareNow
+      }) {
+        ... on PostActionSuccess {
+          post { id status dueAt }
+        }
+        ... on MutationError {
+          message
+        }
+      }
+    }`,
+    { channelId, text }
+  );
+
+  const result = data.createPost;
+  if (result.message) throw new Error(result.message);
+  console.log(JSON.stringify(result.post));
+}
+
 const [, , cmd, ...args] = process.argv;
 
 try {
@@ -99,8 +129,15 @@ try {
       process.exit(1);
     }
     await post(channelId);
+  } else if (cmd === 'postnow') {
+    const [channelId] = args;
+    if (!channelId) {
+      console.error('Usage: buffer-post.js postnow <channelId>');
+      process.exit(1);
+    }
+    await postnow(channelId);
   } else {
-    console.error('Usage: buffer-post.js channels | buffer-post.js post <channelId>');
+    console.error('Usage: buffer-post.js channels | buffer-post.js post <channelId> | buffer-post.js postnow <channelId>');
     process.exit(1);
   }
 } catch (err) {

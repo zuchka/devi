@@ -1,6 +1,6 @@
 ---
 name: pr-digest
-description: Generate a social media digest of notable commits from a GitHub repo since the last run. Writes X and LinkedIn copy, posts to Slack, saves a dated digest file.
+description: Generate a social media digest of notable merged PRs from a GitHub repo since the last run. Writes X and LinkedIn copy, posts to Slack, saves a dated digest file.
 ---
 
 # PR Digest Skill
@@ -31,44 +31,48 @@ node scripts/digest.js <repo-url>
 
 Capture stdout as JSON. If the command exits non-zero, stop and surface the error — do not proceed.
 
-The JSON array contains commits. Each element:
+The JSON array contains PRs. Each element:
 ```json
 {
-  "sha": "a1b2c3d",
+  "number": 42,
   "title": "feat: add jq support for response filtering",
-  "body": "commit body text or empty string",
-  "url": "https://github.com/owner/repo/commit/a1b2c3d...",
-  "date": "2026-03-28T14:22:00Z",
-  "author": "username"
+  "body": "PR description or empty string",
+  "url": "https://github.com/owner/repo/pull/42",
+  "mergedAt": "2026-03-28T14:22:00Z",
+  "author": "username",
+  "labels": [{ "name": "feature" }],
+  "additions": 120,
+  "deletions": 30,
+  "changedFiles": 5
 }
 ```
 
-## Step 2: Judge Commits
+## Step 2: Judge PRs
 
-For each commit in the JSON array, decide: **notable** or **skip**.
+For each PR in the JSON array, decide: **notable** or **skip**.
 
-A commit is notable if it meets at least one of:
+A PR is notable if it meets at least one of:
 - Introduces or changes user-facing functionality
 - Adds a new API, CLI command, or integration
 - Delivers a measurable performance improvement
 - Fixes a bug that affected users in production
 - Makes a meaningful architectural change worth communicating externally
 
-If a commit has no body, judge on title alone. If the title is too vague (e.g., "updates", "misc changes"), skip it.
+If a PR has no body, judge on title alone. If the title is too vague (e.g., "updates", "misc changes"), skip it.
 
 ## Step 3: Silent Skip
 
-If zero commits are notable:
+If zero PRs are notable:
 - Update `state/<owner>-<repo>.json` with `{ "lastDigestAt": "<current ISO timestamp>" }`
-- Print: `No notable commits since <lastDigestAt date>. State updated.`
+- Print: `No notable PRs since <lastDigestAt date>. State updated.`
 - Stop.
 
 ## Step 4: Write Social Copy
 
-Assign each notable commit a sequential number starting at 1. For each, write:
+Assign each notable PR a sequential number starting at 1. For each, write:
 
 **X copy** (≤280 chars):
-- Lead with the user value or impact — not the commit SHA
+- Lead with the user value or impact — not the PR number
 - Conversational but sharp
 - No hashtags
 - One tweet only — no thread copy
@@ -86,13 +90,13 @@ Determine filename: start with `digests/YYYY-MM-DD.md` (today's date). If that f
 Write the file with this structure (note the `N.` number prefix on each heading):
 
 ```
-# Commit Digest — <owner>/<repo> — <YYYY-MM-DD>
+# PR Digest — <owner>/<repo> — <YYYY-MM-DD>
 
-_<N> notable commits since <lastDigestAt date>_
+_<N> notable PRs since <lastDigestAt date>_
 
 ---
 
-## 1. [Commit Title](commit-url)
+## 1. [PR Title](pr-url)
 
 **X copy**
 <copy here>
@@ -102,7 +106,7 @@ _<N> notable commits since <lastDigestAt date>_
 
 ---
 
-## 2. [Commit Title](commit-url)
+## 2. [PR Title](pr-url)
 
 **X copy**
 <copy here>
@@ -129,22 +133,22 @@ If `SLACK_WEBHOOK_URL` is not set, skip this step silently.
 POST to `$SLACK_WEBHOOK_URL` with this JSON body:
 ```json
 {
-  "text": "🗞 Commit Digest — <owner>/<repo> (<YYYY-MM-DD>)",
+  "text": "🗞 PR Digest — <owner>/<repo> (<YYYY-MM-DD>)",
   "blocks": [
     {
       "type": "section",
       "text": {
         "type": "mrkdwn",
-        "text": "🗞 *Commit Digest — <owner>/<repo>* (<YYYY-MM-DD>)\n\n<bullets>"
+        "text": "🗞 *PR Digest — <owner>/<repo>* (<YYYY-MM-DD>)\n\n<bullets>"
       }
     }
   ]
 }
 ```
 
-Each bullet: `• <commit URL|commit title (escaped)> — <X copy truncated to 120 chars>`
+Each bullet: `• <PR URL|PR Title (escaped)> — <X copy truncated to 120 chars>`
 
-Escape commit titles in this order: first replace `&` with `&amp;`, then `>` with `&gt;`, then `|` with `-`.
+Escape PR titles in this order: first replace `&` with `&amp;`, then `>` with `&gt;`, then `|` with `-`.
 
 If the POST fails (non-2xx), log a warning but continue — do not block state update.
 

@@ -49,9 +49,9 @@ const NOISE_TITLE_PATTERNS = [
   /^refactor[:(]/i,
 ];
 
-export function shouldFilter(item) {
-  if (item.labels?.some((l) => NOISE_LABELS.has(l.name.toLowerCase()))) return true;
-  if (NOISE_TITLE_PATTERNS.some((re) => re.test(item.title))) return true;
+export function shouldFilter(pr) {
+  if (pr.labels?.some((l) => NOISE_LABELS.has(l.name.toLowerCase()))) return true;
+  if (NOISE_TITLE_PATTERNS.some((re) => re.test(pr.title))) return true;
   return false;
 }
 
@@ -60,15 +60,15 @@ const GITHUB_HEADERS = {
   'X-GitHub-Api-Version': '2022-11-28',
 };
 
-export async function fetchCommits(owner, repo, since, fetchFn = fetch) {
+export async function fetchMergedPRs(owner, repo, since, fetchFn = fetch) {
   const token = process.env.GITHUB_TOKEN;
   const headers = {
     ...GITHUB_HEADERS,
     Authorization: `Bearer ${token}`,
   };
 
-  const allCommits = [];
-  let url = `https://api.github.com/repos/${owner}/${repo}/commits?since=${since}&per_page=100`;
+  const allItems = [];
+  let url = `https://api.github.com/search/issues?q=is:pr+is:merged+repo:${owner}/${repo}+merged:>${since}&per_page=100`;
 
   while (url) {
     const res = await fetchFn(url, { headers });
@@ -77,33 +77,54 @@ export async function fetchCommits(owner, repo, since, fetchFn = fetch) {
       throw new Error('GitHub rate limit exhausted mid-fetch. Re-run when limit resets.');
     }
     if (!res.ok) {
-      throw new Error(`GitHub API error ${res.status} fetching commits`);
+      throw new Error(`GitHub API error ${res.status} fetching PRs`);
     }
     const data = await res.json();
-    allCommits.push(...data);
+    allItems.push(...data.items);
 
     const link = res.headers.get('Link') ?? '';
     const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
     url = nextMatch ? nextMatch[1] : null;
   }
 
-  return allCommits.map((c) => {
-    const [title, ...bodyLines] = c.commit.message.split('\n');
-    return {
-      sha: c.sha.slice(0, 7),
-      title: title.trim(),
-      body: bodyLines.join('\n').trim().slice(0, 4000),
-      url: c.html_url,
-      date: c.commit.author.date,
-      author: c.author?.login ?? c.commit.author.name,
-    };
-  });
+  return allItems;
+}
+
+export async function fetchPRDetail(owner, repo, number, fetchFn = fetch) {
+  const token = process.env.GITHUB_TOKEN;
+  const headers = {
+    ...GITHUB_HEADERS,
+    Authorization: `Bearer ${token}`,
+  };
+  const res = await fetchFn(
+    `https://api.github.com/repos/${owner}/${repo}/pulls/${number}`,
+    { headers }
+  );
+  if (!res.ok) {
+    throw new Error(`GitHub API error ${res.status} fetching PR #${number}`);
+  }
+  const pr = await res.json();
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: (pr.body ?? '').slice(0, 4000),
+    url: pr.html_url,
+    mergedAt: pr.merged_at,
+    author: pr.user.login,
+    labels: pr.labels,
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changedFiles: pr.changed_files,
+  };
 }
 
 export async function runDigest(owner, repo, stateDir, fetchFn = fetch) {
   const since = await readState(stateDir, owner, repo);
-  const commits = await fetchCommits(owner, repo, since, fetchFn);
-  return commits.filter((c) => !shouldFilter(c));
+  const searchItems = await fetchMergedPRs(owner, repo, since, fetchFn);
+  const details = await Promise.all(
+    searchItems.map((item) => fetchPRDetail(owner, repo, item.number, fetchFn))
+  );
+  return details.filter((pr) => !shouldFilter(pr));
 }
 
 // Only runs when invoked directly (not when imported by tests)
